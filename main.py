@@ -2,7 +2,7 @@
 Real-Time Finger Counter Application Entry Point.
 
 Captures live webcam feed frame-by-frame, processes hand landmarks using HandDetector,
-and overlays live finger count metrics with a sleek UI interface.
+and overlays live finger count metrics for single or multiple hands with a sleek UI interface.
 """
 
 import time
@@ -28,7 +28,7 @@ def main() -> None:
     print("[INFO] Webcam initialized successfully. Starting Hand Tracker...")
     print("[INFO] Press 'q' on the video display window to quit.")
 
-    # 2. Instantiate detector engine
+    # 2. Instantiate detector engine supporting up to 2 hands simultaneously
     detector = HandDetector(max_hands=2, detection_confidence=0.7, tracking_confidence=0.7)
 
     p_time = 0.0  # Previous time for FPS calculation
@@ -45,27 +45,31 @@ def main() -> None:
         # Process frame to detect hands and draw skeleton landmark joints
         frame = detector.find_hands(frame, draw=True)
 
-        total_fingers = 0
-        finger_states = []
+        grand_total_fingers = 0
+        all_hand_states = []
 
-        # Evaluate finger count if at least one hand is detected
+        # 3. Evaluate finger count across ALL detected hands
         if detector.results and detector.results.hand_landmarks:
-            total_fingers, finger_states = detector.count_open_fingers(frame, hand_index=0)
+            num_detected = len(detector.results.hand_landmarks)
+            for h_idx in range(num_detected):
+                count, states = detector.count_open_fingers(frame, hand_index=h_idx)
+                grand_total_fingers += count
+                all_hand_states.append((h_idx, count, states))
 
-        # 3. Calculate frames per second (FPS)
+        # 4. Calculate frames per second (FPS)
         c_time = time.time()
         fps = 1 / (c_time - p_time) if (c_time - p_time) > 0 else 0
         p_time = c_time
 
-        # 4. Render sleek HUD Overlay on Video Window
+        # 5. Render sleek HUD Overlay on Video Window
         # Draw background panel card for metrics display
-        cv2.rectangle(frame, (20, 20), (320, 140), (20, 20, 20), cv2.FILLED)
-        cv2.rectangle(frame, (20, 20), (320, 140), (0, 255, 128), 2)  # Green border
+        cv2.rectangle(frame, (20, 20), (340, 140), (20, 20, 20), cv2.FILLED)
+        cv2.rectangle(frame, (20, 20), (340, 140), (0, 255, 128), 2)  # Green border
 
-        # Display Live Finger Count
+        # Display Total Live Finger Count
         cv2.putText(
             frame,
-            f"Fingers: {total_fingers}",
+            f"Fingers: {grand_total_fingers}",
             (40, 70),
             cv2.FONT_HERSHEY_SIMPLEX,
             1.2,
@@ -86,17 +90,18 @@ def main() -> None:
             cv2.LINE_AA,
         )
 
-        # Display individual finger state badges if detected
-        if finger_states:
+        # Display individual finger state badges for detected hands
+        if all_hand_states:
             labels = ["T", "I", "M", "R", "P"]
-            start_x = 350
-            for idx, state in enumerate(finger_states):
-                color = (0, 255, 0) if state == 1 else (50, 50, 200)
-                cv2.rectangle(frame, (start_x + idx * 45, 20), (start_x + idx * 45 + 40, 60), color, cv2.FILLED)
+            for h_idx, count, states in all_hand_states:
+                start_x = 370
+                start_y = 20 + (h_idx * 50)
+                
+                # Hand label identifier
                 cv2.putText(
                     frame,
-                    labels[idx],
-                    (start_x + idx * 45 + 12, 48),
+                    f"H{h_idx + 1}:",
+                    (start_x, start_y + 30),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
                     (255, 255, 255),
@@ -104,7 +109,22 @@ def main() -> None:
                     cv2.LINE_AA,
                 )
 
-        # 5. Show final rendering in window
+                for idx, state in enumerate(states):
+                    color = (0, 255, 0) if state == 1 else (50, 50, 200)
+                    box_x = start_x + 55 + (idx * 45)
+                    cv2.rectangle(frame, (box_x, start_y), (box_x + 40, start_y + 40), color, cv2.FILLED)
+                    cv2.putText(
+                        frame,
+                        labels[idx],
+                        (box_x + 12, start_y + 28),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+
+        # 6. Show final rendering in window
         cv2.imshow("Computer Vision - Finger Counter", frame)
 
         # Exit application cleanly when 'q' key is pressed

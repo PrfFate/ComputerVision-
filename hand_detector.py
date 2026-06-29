@@ -3,10 +3,11 @@ Hand Detection Module using MediaPipe Tasks API.
 
 This module provides an enterprise-grade HandDetector class to extract hand landmarks
 and determine open/closed status for fingers in real-time visual streams.
-Compatible with modern MediaPipe Tasks API (Python 3.10+ / 3.14+).
+Supports multi-hand tracking and rotation/orientation-invariant thumb detection.
 """
 
 import os
+import math
 import urllib.request
 import cv2
 import numpy as np
@@ -39,6 +40,8 @@ class HandDetector:
     FINGER_PIPS = [6, 10, 14, 18]      # Index, Middle, Ring, Pinky PIP joints
     THUMB_TIP = 4
     THUMB_IP = 3
+    PINKY_MCP = 17
+    INDEX_MCP = 5
 
     def __init__(
         self,
@@ -87,26 +90,25 @@ class HandDetector:
         :param draw: Boolean flag indicating whether to draw landmark nodes.
         :return: Annotated image frame.
         """
-        # Convert BGR OpenCV image to MediaPipe Image object
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
 
-        # Execute hand landmarker detection
         self.results = self.landmarker.detect(mp_image)
 
         if self.results and self.results.hand_landmarks and draw:
             h, w, _ = img.shape
-            for hand_landmarks in self.results.hand_landmarks:
-                # Convert normalized coordinates to pixel coordinates
+            for hand_idx, hand_landmarks in enumerate(self.results.hand_landmarks):
                 pixel_pts = [(int(lm.x * w), int(lm.y * h)) for lm in hand_landmarks]
 
-                # Draw skeleton connections
-                for start_idx, end_idx in self.HAND_CONNECTIONS:
-                    cv2.line(img, pixel_pts[start_idx], pixel_pts[end_idx], (0, 255, 128), 2, cv2.LINE_AA)
+                # Distinct colors for multiple hands (Green/Cyan for Hand 1, Yellow/Orange for Hand 2)
+                line_color = (0, 255, 128) if hand_idx == 0 else (0, 215, 255)
+                node_color = (255, 0, 128) if hand_idx == 0 else (255, 128, 0)
 
-                # Draw landmark joint nodes
+                for start_idx, end_idx in self.HAND_CONNECTIONS:
+                    cv2.line(img, pixel_pts[start_idx], pixel_pts[end_idx], line_color, 2, cv2.LINE_AA)
+
                 for pt in pixel_pts:
-                    cv2.circle(img, pt, 5, (255, 0, 128), cv2.FILLED, cv2.LINE_AA)
+                    cv2.circle(img, pt, 5, node_color, cv2.FILLED, cv2.LINE_AA)
                     cv2.circle(img, pt, 7, (255, 255, 255), 1, cv2.LINE_AA)
 
         return img
@@ -143,9 +145,15 @@ class HandDetector:
                 return self.results.handedness[hand_index][0].category_name
         return "Right"
 
+    @staticmethod
+    def _euclidean_distance(pt1: Tuple[int, int], pt2: Tuple[int, int]) -> float:
+        """Calculate 2D Euclidean distance between two points."""
+        return math.hypot(pt1[0] - pt2[0], pt1[1] - pt2[1])
+
     def count_open_fingers(self, img: cv2.Mat, hand_index: int = 0) -> Tuple[int, List[int]]:
         """
         Logical condition algorithm to evaluate which fingers are open or closed.
+        Uses scale and orientation-invariant distance geometry for thumb detection.
 
         :param img: Input image frame.
         :param hand_index: Target hand index.
@@ -156,24 +164,24 @@ class HandDetector:
             return 0, []
 
         finger_states: List[int] = []
-        hand_label = self.get_hand_label(hand_index=hand_index)
 
-        # 1. Thumb State Logic
-        thumb_tip_x = landmarks[self.THUMB_TIP][1]
-        thumb_ip_x = landmarks[self.THUMB_IP][1]
+        # 1. Orientation-Invariant Thumb State Logic
+        # Calculate distance from thumb tip (4) to pinky MCP base (17) vs thumb IP joint (3) to pinky MCP base (17)
+        thumb_tip_pt = (landmarks[self.THUMB_TIP][1], landmarks[self.THUMB_TIP][2])
+        thumb_ip_pt = (landmarks[self.THUMB_IP][1], landmarks[self.THUMB_IP][2])
+        pinky_mcp_pt = (landmarks[self.PINKY_MCP][1], landmarks[self.PINKY_MCP][2])
 
-        if hand_label == "Right":
-            if thumb_tip_x < thumb_ip_x:
-                finger_states.append(1)
-            else:
-                finger_states.append(0)
+        dist_tip_to_pinky = self._euclidean_distance(thumb_tip_pt, pinky_mcp_pt)
+        dist_ip_to_pinky = self._euclidean_distance(thumb_ip_pt, pinky_mcp_pt)
+
+        # When thumb is extended/open, the tip is significantly further from pinky base than the IP joint is
+        if dist_tip_to_pinky > dist_ip_to_pinky:
+            finger_states.append(1)
         else:
-            if thumb_tip_x > thumb_ip_x:
-                finger_states.append(1)
-            else:
-                finger_states.append(0)
+            finger_states.append(0)
 
         # 2. Four Fingers State Logic (Index, Middle, Ring, Pinky)
+        # Check vertical (y-axis) coordinate: open if tip is higher (smaller y value) than PIP joint
         for tip_id, pip_id in zip(self.FINGER_TIPS, self.FINGER_PIPS):
             if landmarks[tip_id][2] < landmarks[pip_id][2]:
                 finger_states.append(1)
