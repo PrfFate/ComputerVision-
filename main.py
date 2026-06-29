@@ -49,7 +49,7 @@ def main() -> None:
         finger_states = []
 
         # Evaluate finger count if at least one hand is detected
-        if detector.results and detector.results.multi_hand_landmarks:
+        if detector.results and detector.results.hand_landmarks:
             total_fingers, finger_states = detector.count_open_fingers(frame, hand_index=0)
 
         # 3. Calculate frames per second (FPS)
