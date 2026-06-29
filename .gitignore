@@ -30,6 +30,9 @@ venv/
 ENV/
 env/
 
+# Pretrained model binaries
+*.task
+
 # IDE / Editor settings
 .vscode/
 .idea/
